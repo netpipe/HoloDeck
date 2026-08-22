@@ -55,27 +55,68 @@ Vec3 normal(const Vec3& v0, const Vec3& v1, const Vec3& v2) {
 }
 
 // ============================================================================
-// 2. 3-Octave FBM Noise Generation
+// 2. Ken Perlin's Improved Noise (Compact OpenSimplex Alternative)
 // ============================================================================
-float base_noise_3d(const Vec3& p) {
-    float n1 = std::sin(p.dot(Vec3(12.9898f, 78.233f, 45.164f))) * 43758.5453f;
-    float n2 = std::sin(p.dot(Vec3(39.346f, 11.135f, 92.123f))) * 23421.631f;
-    float n3 = std::sin(p.dot(Vec3(73.156f, 52.235f, 9.151f))) * 15782.153f;
-    float val1 = n1 - std::floor(n1);
-    float val2 = n2 - std::floor(n2);
-    float val3 = n3 - std::floor(n3);
-    return (val1 + val2 + val3) / 3.0f;
+static const int perm[512] = {
+    151,160,137,91,90,15,131,13,201,95,96,53,194,233,7,225,140,36,103,30,69,142,8,99,37,240,21,10,23,190,6,148,
+    247,120,234,75,0,26,197,62,94,252,219,203,117,35,11,32,57,177,33,88,237,149,56,87,174,20,125,136,171,168,68,175,
+    74,165,71,134,139,48,27,166,77,146,158,231,83,111,229,122,60,211,133,230,220,105,92,41,55,46,245,40,244,102,143,
+    54,65,25,63,161,1,216,80,73,209,76,132,187,208,89,18,169,200,196,135,130,116,188,159,86,164,100,109,198,173,186,
+    3,64,52,217,226,250,124,123,5,202,38,147,118,126,255,82,85,212,207,206,59,227,47,16,58,17,182,189,28,42,223,183,
+    170,213,119,248,152,2,44,154,163,70,221,153,101,155,167,43,172,9,129,22,39,253,19,98,108,110,79,113,224,232,178,185,112,104,
+    218,246,97,228,251,34,242,193,238,210,144,12,191,179,162,241,81,51,145,235,249,14,239,107,49,192,214,31,181,199,106,157,184,
+    84,204,176,115,121,50,45,127,4,150,254,138,236,205,93,222,114,67,29,24,72,243,141,128,195,78,66,215,61,156,180,
+    151,160,137,91,90,15,131,13,201,95,96,53,194,233,7,225,140,36,103,30,69,142,8,99,37,240,21,10,23,190,6,148,
+    247,120,234,75,0,26,197,62,94,252,219,203,117,35,11,32,57,177,33,88,237,149,56,87,174,20,125,136,171,168,68,175,
+    74,165,71,134,139,48,27,166,77,146,158,231,83,111,229,122,60,211,133,230,220,105,92,41,55,46,245,40,244,102,143,
+    54,65,25,63,161,1,216,80,73,209,76,132,187,208,89,18,169,200,196,135,130,116,188,159,86,164,100,109,198,173,186,
+    3,64,52,217,226,250,124,123,5,202,38,147,118,126,255,82,85,212,207,206,59,227,47,16,58,17,182,189,28,42,223,183,
+    170,213,119,248,152,2,44,154,163,70,221,153,101,155,167,43,172,9,129,22,39,253,19,98,108,110,79,113,224,232,178,185,112,104,
+    218,246,97,228,251,34,242,193,238,210,144,12,191,179,162,241,81,51,145,235,249,14,239,107,49,192,214,31,181,199,106,157,184,
+    84,204,176,115,121,50,45,127,4,150,254,138,236,205,93,222,114,67,29,24,72,243,141,128,195,78,66,215,61,156,180
+};
+
+inline float fade(float t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+inline float lerp(float t, float a, float b) { return a + t * (b - a); }
+inline float grad(int hash, float x, float y, float z) {
+    int h = hash & 15;
+    float u = h < 8 ? x : y, v = h < 4 ? y : h == 12 || h == 14 ? x : z;
+    return ((h & 1) == 0 ? u : -u) + ((h & 2) == 0 ? v : -v);
+}
+
+float perlin_noise(float x, float y, float z) {
+    int X = (int)std::floor(x) & 255;
+    int Y = (int)std::floor(y) & 255;
+    int Z = (int)std::floor(z) & 255;
+    x -= std::floor(x); y -= std::floor(y); z -= std::floor(z);
+    float u = fade(x), v = fade(y), w = fade(z);
+    int A = perm[X] + Y, AA = perm[A] + Z, AB = perm[A + 1] + Z;
+    int B = perm[X + 1] + Y, BA = perm[B] + Z, BB = perm[B + 1] + Z;
+    return lerp(w, lerp(v, lerp(u, grad(perm[AA], x, y, z), grad(perm[BA], x - 1, y, z)),
+                           lerp(u, grad(perm[AB], x, y - 1, z), grad(perm[BB], x - 1, y - 1, z))),
+                   lerp(v, lerp(u, grad(perm[AA + 1], x, y, z - 1), grad(perm[BA + 1], x - 1, y, z - 1)),
+                           lerp(u, grad(perm[AB + 1], x, y - 1, z - 1), grad(perm[BB + 1], x - 1, y - 1, z - 1))));
 }
 
 float get_noise(const Vec3& dir) {
-    float value = 0.0f, amplitude = 0.6f, frequency = 3.0f, max_amp = 0.0f;
-    for (int i = 0; i < 3; ++i) {
-        value += amplitude * base_noise_3d(dir * frequency);
-        max_amp += amplitude;
-        frequency *= 2.0f;
-        amplitude *= 0.5f;
+    float scale = 2.5f; 
+    Vec3 p = dir * scale;
+    
+    float val = 0.0f;
+    float amp = 0.55f;
+    float freq = 1.0f;
+    float max_amp = 0.0f;
+    
+    // 5 Octaves of Improved Perlin Noise
+    for(int i=0; i<5; ++i) {
+        val += amp * perlin_noise(p.x * freq, p.y * freq, p.z * freq);
+        freq *= 2.1f; 
+        amp *= 0.48f; 
+        max_amp += amp;
     }
-    return value / max_amp;
+    
+    float normalized = (val / max_amp + 1.0f) * 0.5f;
+    return std::max(0.0f, std::min(1.0f, normalized));
 }
 
 // ============================================================================
@@ -97,7 +138,6 @@ struct LogicalEntity {
 // ============================================================================
 struct HolodeckChunk {
     int cx, cy; 
-    std::vector<Triangle> mesh;
     std::vector<LogicalEntity> entities;
     bool has_tardis = false;
     GLuint dl = 0;
@@ -105,41 +145,16 @@ struct HolodeckChunk {
     HolodeckChunk(int chunk_x, int chunk_y, float planet_radius) : cx(chunk_x), cy(chunk_y) {
         generate_geometry(planet_radius);
         check_for_tardis();
-        
-        dl = glGenLists(1);
-        glNewList(dl, GL_COMPILE);
-        glShadeModel(GL_FLAT);
-        
-        glBegin(GL_TRIANGLES);
-        for (const auto& tri : mesh) {
-            glNormal3f(tri.normal.x, tri.normal.y, tri.normal.z);
-            float h0 = std::max(0.0f, std::min(1.0f, (tri.v0.length() - planet_radius) / (planet_radius * 0.05f)));
-            float h1 = std::max(0.0f, std::min(1.0f, (tri.v1.length() - planet_radius) / (planet_radius * 0.05f)));
-            float h2 = std::max(0.0f, std::min(1.0f, (tri.v2.length() - planet_radius) / (planet_radius * 0.05f)));
-            
-            auto set_color = [&](float h) {
-                if (h < 0.25f) glColor3f(0.1f, 0.3f, 0.7f); 
-                else if (h < 0.3f) glColor3f(0.2f, 0.4f, 0.8f); 
-                else if (h < 0.4f) glColor3f(0.76f, 0.70f, 0.50f); 
-                else if (h < 0.75f) glColor3f(0.13f, 0.54f, 0.13f); 
-                else glColor3f(0.9f, 0.9f, 0.95f); 
-            };
-            
-            set_color(h0); glVertex3f(tri.v0.x, tri.v0.y, tri.v0.z);
-            set_color(h1); glVertex3f(tri.v1.x, tri.v1.y, tri.v1.z);
-            set_color(h2); glVertex3f(tri.v2.x, tri.v2.y, tri.v2.z);
-        }
-        glEnd();
-        glEndList();
     }
     
     ~HolodeckChunk() { if (dl) glDeleteLists(dl, 1); }
+
+    struct Vertex { Vec3 pos, normal; };
 
     void generate_geometry(float radius) {
         float total_chunks_x = 16.0f; 
         float total_chunks_y = 8.0f;
         
-        // Wrap cx for seamless spherical coordinates
         float wrapped_cx = std::fmod(float(cx), total_chunks_x);
         if (wrapped_cx < 0) wrapped_cx += total_chunks_x;
         
@@ -147,19 +162,19 @@ struct HolodeckChunk {
         float phi_base = (float(cy) / total_chunks_y) * M_PI;          
         float phi_end = (float(cy + 1) / total_chunks_y) * M_PI;
 
-        // Equal-Area Latitude Mapping: Fixes "tight poles / blurry equator" distortion
         float cos_phi_start = std::cos(phi_base);
         float cos_phi_end = std::cos(phi_end);
 
-        std::vector<Vec3> verts;
-        int res = 32; 
+        std::vector<Vertex> verts;
+        int res = 40; // Increased for smoother silhouettes
+        verts.reserve((res + 1) * (res + 1));
+        
         for (int i = 0; i <= res; ++i) {
             for (int j = 0; j <= res; ++j) {
                 float u = float(j) / res;
                 float v = float(i) / res;
                 
                 float lt = theta_base + u * (2.0f * M_PI / total_chunks_x);
-                
                 float current_cos_phi = cos_phi_start + v * (cos_phi_end - cos_phi_start);
                 current_cos_phi = std::max(-1.0f, std::min(1.0f, current_cos_phi));
                 float lp = std::acos(current_cos_phi);
@@ -168,22 +183,64 @@ struct HolodeckChunk {
                 float noise_val = get_noise(dir);
                 float disp = noise_val * (radius * 0.05f);
                 
-                verts.push_back(dir * (radius + disp));
+                verts.push_back({dir * (radius + disp), Vec3(0,0,0)});
             }
         }
 
+        struct Tri { int i0, i1, i2; };
+        std::vector<Tri> tris;
+        tris.reserve(res * res * 2);
+
         for (int i = 0; i < res; ++i) {
             for (int j = 0; j < res; ++j) {
-                uint32_t a = i * (res + 1) + j;
-                uint32_t b = a + res + 1;
+                int a = i * (res + 1) + j;
+                int b = a + res + 1;
+                int c = a + 1;
+                int d = b + 1;
                 
-                Vec3 v0 = verts[a], v1 = verts[b], v2 = verts[a + 1];
-                Vec3 v3 = verts[a + 1], v4 = verts[b], v5 = verts[b + 1];
-                
-                Triangle t1(v0, v1, v2); t1.normal = normal(v0, v1, v2); mesh.push_back(t1);
-                Triangle t2(v3, v4, v5); t2.normal = normal(v3, v4, v5); mesh.push_back(t2);
+                tris.push_back({a, b, c});
+                tris.push_back({c, b, d});
             }
         }
+
+        // Vertex Normal Averaging (Crucial for Smooth Shading)
+        for (const auto& t : tris) {
+            Vec3 n = normal(verts[t.i0].pos, verts[t.i1].pos, verts[t.i2].pos);
+            verts[t.i0].normal = verts[t.i0].normal + n;
+            verts[t.i1].normal = verts[t.i1].normal + n;
+            verts[t.i2].normal = verts[t.i2].normal + n;
+        }
+
+        for (auto& v : verts) {
+            v.normal = v.normal.normalized();
+        }
+
+        dl = glGenLists(1);
+        glNewList(dl, GL_COMPILE);
+        glShadeModel(GL_SMOOTH); // Interpolated normals completely hide "pokey" facets!
+        
+        glBegin(GL_TRIANGLES);
+        for (const auto& t : tris) {
+            auto draw_v = [&](int idx) {
+                const auto& v = verts[idx];
+                glNormal3f(v.normal.x, v.normal.y, v.normal.z);
+                
+                float h = std::max(0.0f, std::min(1.0f, (v.pos.length() - radius) / (radius * 0.05f)));
+                
+                if (h < 0.35f) glColor3f(0.1f, 0.3f, 0.7f); 
+                else if (h < 0.4f) glColor3f(0.2f, 0.4f, 0.8f); 
+                else if (h < 0.45f) glColor3f(0.76f, 0.70f, 0.50f); 
+                else if (h < 0.75f) glColor3f(0.13f, 0.54f, 0.13f); 
+                else glColor3f(0.9f, 0.9f, 0.95f); 
+                
+                glVertex3f(v.pos.x, v.pos.y, v.pos.z);
+            };
+            draw_v(t.i0);
+            draw_v(t.i1);
+            draw_v(t.i2);
+        }
+        glEnd();
+        glEndList();
     }
 
     void check_for_tardis() {
@@ -384,7 +441,6 @@ int main() {
     std::cout << "Initializing Sliding Planetary Holodeck...\n";
     float planet_radius = 50.0f;
     
-    // 7x5 Grid for smoother streaming transitions
     PlanetaryHolodeck holodeck(7, 5, planet_radius); 
 
     glEnable(GL_DEPTH_TEST);
@@ -392,7 +448,7 @@ int main() {
     glEnable(GL_LIGHT0);
     glEnable(GL_COLOR_MATERIAL);
     glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
-    glShadeModel(GL_FLAT);
+    glShadeModel(GL_SMOOTH); // Smooth global shading
 
     float ambient[] = {0.4f, 0.4f, 0.4f, 1.0f};
     float diffuse[] = {0.8f, 0.8f, 0.8f, 1.0f};
@@ -409,7 +465,6 @@ int main() {
     double lastX = 640.0, lastY = 360.0;
     bool firstMouse = true;
 
-    // Unwrapped Continuous Coordinate Tracking
     float last_theta = std::atan2(camPos.z, camPos.x);
     if (last_theta < 0) last_theta += 2.0f * M_PI;
     float unwrapped_theta = last_theta;
@@ -489,7 +544,6 @@ int main() {
         if (camPitch > 1.5f) camPitch = 1.5f;
         if (camPitch < -1.5f) camPitch = -1.5f;
 
-        // Unwrapped Continuous Streaming Logic
         float current_theta = std::atan2(camPos.z, camPos.x);
         if (current_theta < 0) current_theta += 2.0f * M_PI;
         float delta_theta = current_theta - last_theta;
@@ -538,7 +592,6 @@ int main() {
         float aspect = 1280.0f / 720.0f;
         float fov = 1.0f / std::tan(45.0f * M_PI / 360.0f);
         
-        // Dynamic Near/Far planes completely fixes Z-fighting on the surface
         float n = orbit_mode ? 1.0f : 0.1f;
         float f = orbit_mode ? 5000.0f : 250.0f; 
         float proj[16] = {
