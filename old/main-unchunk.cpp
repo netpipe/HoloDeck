@@ -5,7 +5,6 @@
 #include <cmath>
 #include <algorithm>
 #include <chrono>
-#include <deque>
 #include <functional>
 
 //g++ -std=c++11 main.cpp -o app   -I/usr/local/include   -L/usr/local/lib   -lglfw   -framework OpenGL   -framework Cocoa   -framework IOKit   -framework CoreVideo -L/Users/macbook2015/Desktop/brew/lib -I/Users/macbook2015/Desktop/brew/include
@@ -61,21 +60,28 @@ float base_noise_3d(const Vec3& p) {
     float n1 = std::sin(p.dot(Vec3(12.9898f, 78.233f, 45.164f))) * 43758.5453f;
     float n2 = std::sin(p.dot(Vec3(39.346f, 11.135f, 92.123f))) * 23421.631f;
     float n3 = std::sin(p.dot(Vec3(73.156f, 52.235f, 9.151f))) * 15782.153f;
+    
     float val1 = n1 - std::floor(n1);
     float val2 = n2 - std::floor(n2);
     float val3 = n3 - std::floor(n3);
+    
     return (val1 + val2 + val3) / 3.0f;
 }
 
 float get_noise(const Vec3& dir) {
-    float value = 0.0f, amplitude = 0.6f, frequency = 3.0f, max_amp = 0.0f;
+    float value = 0.0f;
+    float amplitude = 0.6f;
+    float frequency = 3.0f; // Base frequency
+    float max_amp = 0.0f;
+    
+    // 3 Octaves
     for (int i = 0; i < 3; ++i) {
         value += amplitude * base_noise_3d(dir * frequency);
         max_amp += amplitude;
         frequency *= 2.0f;
         amplitude *= 0.5f;
     }
-    return value / max_amp;
+    return value / max_amp; // Normalized strictly to 0..1
 }
 
 // ============================================================================
@@ -106,23 +112,25 @@ struct HolodeckChunk {
         generate_geometry(planet_radius);
         check_for_tardis();
         
+        // Generate solid lit display list
         dl = glGenLists(1);
         glNewList(dl, GL_COMPILE);
-        glShadeModel(GL_FLAT);
+        glShadeModel(GL_FLAT); // Flat shading for stylized low-poly look
         
         glBegin(GL_TRIANGLES);
         for (const auto& tri : mesh) {
             glNormal3f(tri.normal.x, tri.normal.y, tri.normal.z);
+            
             float h0 = std::max(0.0f, std::min(1.0f, (tri.v0.length() - planet_radius) / (planet_radius * 0.05f)));
             float h1 = std::max(0.0f, std::min(1.0f, (tri.v1.length() - planet_radius) / (planet_radius * 0.05f)));
             float h2 = std::max(0.0f, std::min(1.0f, (tri.v2.length() - planet_radius) / (planet_radius * 0.05f)));
             
             auto set_color = [&](float h) {
-                if (h < 0.25f) glColor3f(0.1f, 0.3f, 0.7f); 
-                else if (h < 0.3f) glColor3f(0.2f, 0.4f, 0.8f); 
-                else if (h < 0.4f) glColor3f(0.76f, 0.70f, 0.50f); 
-                else if (h < 0.75f) glColor3f(0.13f, 0.54f, 0.13f); 
-                else glColor3f(0.9f, 0.9f, 0.95f); 
+                if (h < 0.25f) glColor3f(0.1f, 0.3f, 0.7f); // Deep Water
+                else if (h < 0.3f) glColor3f(0.2f, 0.4f, 0.8f); // Shallow Water
+                else if (h < 0.4f) glColor3f(0.76f, 0.70f, 0.50f); // Sand
+                else if (h < 0.75f) glColor3f(0.13f, 0.54f, 0.13f); // Grass
+                else glColor3f(0.9f, 0.9f, 0.95f); // Snow
             };
             
             set_color(h0); glVertex3f(tri.v0.x, tri.v0.y, tri.v0.z);
@@ -133,36 +141,23 @@ struct HolodeckChunk {
         glEndList();
     }
     
-    ~HolodeckChunk() { if (dl) glDeleteLists(dl, 1); }
+    ~HolodeckChunk() {
+        if (dl) glDeleteLists(dl, 1);
+    }
 
     void generate_geometry(float radius) {
         float total_chunks_x = 16.0f; 
         float total_chunks_y = 8.0f;
         
-        // Wrap cx for seamless spherical coordinates
-        float wrapped_cx = std::fmod(float(cx), total_chunks_x);
-        if (wrapped_cx < 0) wrapped_cx += total_chunks_x;
-        
-        float theta_base = (wrapped_cx / total_chunks_x) * 2.0f * M_PI; 
+        float theta_base = (float(cx) / total_chunks_x) * 2.0f * M_PI; 
         float phi_base = (float(cy) / total_chunks_y) * M_PI;          
-        float phi_end = (float(cy + 1) / total_chunks_y) * M_PI;
-
-        // Equal-Area Latitude Mapping: Fixes "tight poles / blurry equator" distortion
-        float cos_phi_start = std::cos(phi_base);
-        float cos_phi_end = std::cos(phi_end);
 
         std::vector<Vec3> verts;
-        int res = 32; 
+        int res = 32; // Increased resolution to fix equator texture blurring
         for (int i = 0; i <= res; ++i) {
             for (int j = 0; j <= res; ++j) {
-                float u = float(j) / res;
-                float v = float(i) / res;
-                
-                float lt = theta_base + u * (2.0f * M_PI / total_chunks_x);
-                
-                float current_cos_phi = cos_phi_start + v * (cos_phi_end - cos_phi_start);
-                current_cos_phi = std::max(-1.0f, std::min(1.0f, current_cos_phi));
-                float lp = std::acos(current_cos_phi);
+                float lt = theta_base + (float(j)/res) * (2.0f * M_PI / total_chunks_x);
+                float lp = phi_base + (float(i)/res) * (M_PI / total_chunks_y);
                 
                 Vec3 dir(std::sin(lp) * std::cos(lt), std::cos(lp), std::sin(lp) * std::sin(lt));
                 float noise_val = get_noise(dir);
@@ -180,29 +175,30 @@ struct HolodeckChunk {
                 Vec3 v0 = verts[a], v1 = verts[b], v2 = verts[a + 1];
                 Vec3 v3 = verts[a + 1], v4 = verts[b], v5 = verts[b + 1];
                 
-                Triangle t1(v0, v1, v2); t1.normal = normal(v0, v1, v2); mesh.push_back(t1);
-                Triangle t2(v3, v4, v5); t2.normal = normal(v3, v4, v5); mesh.push_back(t2);
+                Triangle t1(v0, v1, v2);
+                t1.normal = normal(v0, v1, v2);
+                mesh.push_back(t1);
+                
+                Triangle t2(v3, v4, v5);
+                t2.normal = normal(v3, v4, v5);
+                mesh.push_back(t2);
             }
         }
     }
 
     void check_for_tardis() {
-        float wrapped_cx = std::fmod(float(cx), 16.0f);
-        if (wrapped_cx < 0) wrapped_cx += 16.0f;
-        
-        if (int(wrapped_cx) == 8 && cy == 4) {
+        if (cx == 8 && cy == 4) {
             has_tardis = true;
             
-            float total_chunks_x = 16.0f, total_chunks_y = 8.0f;
-            float center_theta = (wrapped_cx + 0.5f) / total_chunks_x * 2.0f * M_PI;
-            float phi_base = (float(cy) / total_chunks_y) * M_PI;
-            float phi_end = (float(cy + 1) / total_chunks_y) * M_PI;
-            float cos_center = std::cos(phi_base) + 0.5f * (std::cos(phi_end) - std::cos(phi_base));
-            float center_phi = std::acos(cos_center);
+            // Calculate exact mathematical center of this chunk
+            float total_chunks_x = 16.0f;
+            float total_chunks_y = 8.0f;
+            float center_theta = (float(cx) + 0.5f) / total_chunks_x * 2.0f * M_PI;
+            float center_phi = (float(cy) + 0.5f) / total_chunks_y * M_PI;
             
             Vec3 tardis_dir(std::sin(center_phi) * std::cos(center_theta), std::cos(center_phi), std::sin(center_phi) * std::sin(center_theta));
-            tardis_dir = tardis_dir.normalized();
             
+            // Snap precisely to the noise terrain surface
             float noise_val = get_noise(tardis_dir);
             float r = 50.0f + noise_val * (50.0f * 0.05f);
             Vec3 tardis_pos = tardis_dir * r;
@@ -227,9 +223,7 @@ struct HolodeckChunk {
 
             LogicalEntity human;
             human.type = LogicalEntity::HUMANOID; human.name = "Wandering Entity";
-            Vec3 up = tardis_pos.normalized();
-            Vec3 right = Vec3(0,1,0).cross(up).normalized();
-            human.local_pos = (tardis_pos + right * 2.0f).normalized() * tardis_pos.length();
+            human.local_pos = tardis_pos + Vec3(2.0f, 0, 0); 
             human.velocity = {0.8f, 0, 0.8f}; human.wander_timer = 2.0f;
             human.local_bounds.min = {-0.2f, 0, -0.2f}; human.local_bounds.max = {0.2f, 1.0f, 0.2f};
             entities.push_back(human);
@@ -238,7 +232,7 @@ struct HolodeckChunk {
 
     void update_ai(float dt) {
         for (auto& e : entities) {
-            if (e.type == LogicalEntity::HUMANOID) {
+            if (e.type == LogicalEntity::HUMANOID || e.type == LogicalEntity::PAINTING) {
                 e.wander_timer -= dt;
                 if (e.wander_timer <= 0) {
                     e.velocity = Vec3((float(rand()%200)/100.0f)-1.0f, 0, (float(rand()%200)/100.0f)-1.0f) * 1.5f;
@@ -246,76 +240,46 @@ struct HolodeckChunk {
                 }
                 e.local_pos = e.local_pos + e.velocity * dt;
                 
-                Vec3 dir = e.local_pos.normalized();
-                float h = get_noise(dir);
-                float r = 50.0f + h * (50.0f * 0.05f);
-                e.local_pos = dir * (r + 0.0f);
-                
-                Vec3 tardis_pos = entities[0].local_pos;
-                float dist_to_house = (e.local_pos - tardis_pos).length();
-                if (dist_to_house > 5.0f) e.velocity = (tardis_pos - e.local_pos).normalized() * 1.5f;
+                // Keep human on surface
+                if (e.type == LogicalEntity::HUMANOID) {
+                    Vec3 dir = e.local_pos.normalized();
+                    float h = get_noise(dir);
+                    float r = 50.0f + h * (50.0f * 0.05f);
+                    e.local_pos = dir * (r + 0.0f);
+                    
+                    Vec3 tardis_pos = entities[0].local_pos;
+                    float dist_to_house = (e.local_pos - tardis_pos).length();
+                    if (dist_to_house > 5.0f) {
+                        e.velocity = (tardis_pos - e.local_pos).normalized() * 1.5f;
+                    }
+                }
             }
         }
     }
 };
 
 // ============================================================================
-// 5. The Sliding Holodeck Grid
+// 5. The Planetary Holodeck
 // ============================================================================
 class PlanetaryHolodeck {
 public:
-    int width, height;
-    std::deque<std::deque<HolodeckChunk*>> grid;
-    int origin_x, origin_y;
+    int width = 16, height = 8;
+    std::vector<std::vector<HolodeckChunk*>> grid;
     float planet_radius;
 
-    PlanetaryHolodeck(int w, int h, float r) : width(w), height(h), origin_x(0), origin_y(0), planet_radius(r) {
+    // By loading the full 16x8 closed sphere, we completely eliminate edge streaming bugs
+    PlanetaryHolodeck(float r) : planet_radius(r) {
         grid.resize(height);
-        int start_cx = 8 - w/2;
-        int start_cy = 4 - h/2;
-        origin_x = start_cx;
-        origin_y = start_cy;
         for (int i = 0; i < height; ++i) {
+            grid[i].resize(width);
             for (int j = 0; j < width; ++j) {
-                grid[i].push_back(new HolodeckChunk(origin_x + j, origin_y + i, r));
+                grid[i][j] = new HolodeckChunk(j, i, r);
             }
         }
     }
 
     ~PlanetaryHolodeck() {
         for (auto& row : grid) for (auto* chunk : row) delete chunk;
-    }
-
-    void shift_x(int dir) {
-        if (dir > 0) { 
-            for (int i = 0; i < height; ++i) {
-                delete grid[i].front(); grid[i].pop_front();
-                grid[i].push_back(new HolodeckChunk(origin_x + width, origin_y + i, planet_radius));
-            }
-            origin_x++;
-        } else {
-            for (int i = 0; i < height; ++i) {
-                delete grid[i].back(); grid[i].pop_back();
-                grid[i].push_front(new HolodeckChunk(origin_x - 1, origin_y + i, planet_radius));
-            }
-            origin_x--;
-        }
-    }
-
-    void shift_y(int dir) {
-        if (dir > 0) { 
-            for (auto* chunk : grid.front()) delete chunk; grid.pop_front();
-            std::deque<HolodeckChunk*> new_row;
-            for (int j = 0; j < width; ++j) new_row.push_back(new HolodeckChunk(origin_x + j, origin_y + height, planet_radius));
-            grid.push_back(new_row);
-            origin_y++;
-        } else {
-            for (auto* chunk : grid.back()) delete chunk; grid.pop_back();
-            std::deque<HolodeckChunk*> new_row;
-            for (int j = 0; j < width; ++j) new_row.push_back(new HolodeckChunk(origin_x + j, origin_y - 1, planet_radius));
-            grid.push_front(new_row);
-            origin_y--;
-        }
     }
 
     void update_ai(float dt) {
@@ -339,12 +303,7 @@ void advance_time(PlanetaryHolodeck& holo) {
 void restore_tardis(PlanetaryHolodeck& holo) {
     for (auto& row : holo.grid) for (auto* chunk : row) if (chunk->has_tardis) for (auto& e : chunk->entities) {
         if (e.type == LogicalEntity::ROOM && e.is_backed_up) { e.entropy = 0; std::cout << "[GUARDIAN PAINTING]: 'The timeline is rewritten!'\n"; }
-        if (e.type == LogicalEntity::HUMANOID) {
-            Vec3 tardis_pos = chunk->entities[0].local_pos;
-            Vec3 up = tardis_pos.normalized();
-            Vec3 right = Vec3(0,1,0).cross(up).normalized();
-            e.local_pos = (tardis_pos + right * 2.0f).normalized() * tardis_pos.length(); 
-        }
+        if (e.type == LogicalEntity::HUMANOID) e.local_pos = entities[0].local_pos + Vec3(2.0f, 0, 0); 
     }
 }
 
@@ -365,9 +324,21 @@ void drawSolidBox(const AABB& bounds, Vec3 color) {
 }
 
 void drawHouse() {
-    drawSolidBox({{-1.5f, 0.0f, -1.5f}, {1.5f, 3.0f, 1.5f}}, {0.6f, 0.4f, 0.2f}); 
-    drawSolidBox({{-1.8f, 3.0f, -1.8f}, {1.8f, 3.5f, 1.8f}}, {0.5f, 0.1f, 0.1f}); 
-    drawSolidBox({{-0.5f, 0.0f, 1.5f}, {0.5f, 2.0f, 1.55f}}, {0.3f, 0.2f, 0.1f}); 
+    drawSolidBox({{-1.5f, 0.0f, -1.5f}, {1.5f, 3.0f, 1.5f}}, {0.6f, 0.4f, 0.2f}); // Main Body
+    drawSolidBox({{-1.8f, 3.0f, -1.8f}, {1.8f, 3.5f, 1.8f}}, {0.5f, 0.1f, 0.1f}); // Roof
+    drawSolidBox({{-0.5f, 0.0f, 1.5f}, {0.5f, 2.0f, 1.55f}}, {0.3f, 0.2f, 0.1f}); // Door
+}
+
+void drawWireBox(const AABB& bounds, Vec3 offset, float r, float g, float b, float lw = 1.0f) {
+    glLineWidth(lw); glColor3f(r, g, b); glBegin(GL_LINES);
+    Vec3 min = bounds.min + offset, max = bounds.max + offset;
+    glVertex3f(min.x, min.y, min.z); glVertex3f(max.x, min.y, min.z); glVertex3f(max.x, min.y, min.z); glVertex3f(max.x, min.y, max.z);
+    glVertex3f(max.x, min.y, max.z); glVertex3f(min.x, min.y, max.z); glVertex3f(min.x, min.y, max.z); glVertex3f(min.x, min.y, min.z);
+    glVertex3f(min.x, max.y, min.z); glVertex3f(max.x, max.y, min.z); glVertex3f(max.x, max.y, min.z); glVertex3f(max.x, max.y, max.z);
+    glVertex3f(max.x, max.y, max.z); glVertex3f(min.x, max.y, max.z); glVertex3f(min.x, max.y, max.z); glVertex3f(min.x, max.y, min.z);
+    glVertex3f(min.x, min.y, min.z); glVertex3f(min.x, max.y, min.z); glVertex3f(max.x, min.y, min.z); glVertex3f(max.x, max.y, min.z);
+    glVertex3f(max.x, min.y, max.z); glVertex3f(max.x, max.y, max.z); glVertex3f(min.x, min.y, max.z); glVertex3f(min.x, max.y, max.z);
+    glEnd();
 }
 
 // ============================================================================
@@ -381,11 +352,9 @@ int main() {
     glfwSwapInterval(1);
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
-    std::cout << "Initializing Sliding Planetary Holodeck...\n";
+    std::cout << "Initializing Closed Planetary Sphere...\n";
     float planet_radius = 50.0f;
-    
-    // 7x5 Grid for smoother streaming transitions
-    PlanetaryHolodeck holodeck(7, 5, planet_radius); 
+    PlanetaryHolodeck holodeck(planet_radius); 
 
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_LIGHTING);
@@ -409,14 +378,9 @@ int main() {
     double lastX = 640.0, lastY = 360.0;
     bool firstMouse = true;
 
-    // Unwrapped Continuous Coordinate Tracking
-    float last_theta = std::atan2(camPos.z, camPos.x);
-    if (last_theta < 0) last_theta += 2.0f * M_PI;
-    float unwrapped_theta = last_theta;
-
     std::cout << "\n--- HOLODECK CONTROLS ---\n";
     std::cout << "Mouse: Look around (FPS)\n";
-    std::cout << "W/A/S/D: Walk on Planet Surface (Triggers Streaming)\n";
+    std::cout << "W/A/S/D: Walk on Planet Surface\n";
     std::cout << "Z: Toggle Orbit Mode (Zoom out to see planet)\n";
     std::cout << "PageUp/PageDown: Zoom In/Out (Orbit Mode)\n";
     std::cout << "T: Advance Time | B: BACKUP | R: RESTORE\n";
@@ -442,7 +406,7 @@ int main() {
         if (glfwGetKey(window, GLFW_KEY_PAGE_UP) == GLFW_PRESS) orbit_dist -= 150.0f * dt;
         if (glfwGetKey(window, GLFW_KEY_PAGE_DOWN) == GLFW_PRESS) orbit_dist += 150.0f * dt;
         if (orbit_dist < planet_radius * 1.2f) orbit_dist = planet_radius * 1.2f;
-        if (orbit_dist > 5000.0f) orbit_dist = 5000.0f; 
+        if (orbit_dist > 3000.0f) orbit_dist = 3000.0f; // Massive zoom out distance
 
         Vec3 N = camPos.normalized();
         Vec3 ref_up(0, 1, 0);
@@ -462,7 +426,7 @@ int main() {
             N = camPos.normalized();
             float noise_val = get_noise(N);
             float terrain_radius = planet_radius + noise_val * (planet_radius * 0.05f);
-            camPos = N * (terrain_radius + 1.5f); 
+            camPos = N * (terrain_radius + 1.5f); // Clamp to surface + player height
         } else {
             if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) camPitch += 1.5f * dt;
             if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) camPitch -= 1.5f * dt;
@@ -489,35 +453,6 @@ int main() {
         if (camPitch > 1.5f) camPitch = 1.5f;
         if (camPitch < -1.5f) camPitch = -1.5f;
 
-        // Unwrapped Continuous Streaming Logic
-        float current_theta = std::atan2(camPos.z, camPos.x);
-        if (current_theta < 0) current_theta += 2.0f * M_PI;
-        float delta_theta = current_theta - last_theta;
-        if (delta_theta > M_PI) delta_theta -= 2.0f * M_PI;
-        if (delta_theta < -M_PI) delta_theta += 2.0f * M_PI;
-        unwrapped_theta += delta_theta;
-        last_theta = current_theta;
-
-        float current_phi = std::acos(std::max(-1.0f, std::min(1.0f, camPos.y / camPos.length())));
-
-        float chunk_x_float = (unwrapped_theta / (2.0f * M_PI)) * 16.0f;
-        float chunk_y_float = (current_phi / M_PI) * 8.0f;
-
-        int current_cx = std::floor(chunk_x_float);
-        int current_cy = std::floor(chunk_y_float);
-
-        int desired_origin_x = current_cx - holodeck.width / 2;
-        int desired_origin_y = current_cy - holodeck.height / 2;
-        
-        int min_origin_y = 0;
-        int max_origin_y = 8 - holodeck.height;
-        desired_origin_y = std::max(min_origin_y, std::min(max_origin_y, desired_origin_y));
-
-        while (holodeck.origin_x < desired_origin_x) { holodeck.shift_x(1); }
-        while (holodeck.origin_x > desired_origin_x) { holodeck.shift_x(-1); }
-        while (holodeck.origin_y < desired_origin_y) { holodeck.shift_y(1); }
-        while (holodeck.origin_y > desired_origin_y) { holodeck.shift_y(-1); }
-
         static bool t_pressed = false, b_pressed = false, r_pressed = false;
         if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS && !t_pressed) { t_pressed = true; advance_time(holodeck); }
         if (glfwGetKey(window, GLFW_KEY_T) == GLFW_RELEASE) t_pressed = false;
@@ -538,9 +473,9 @@ int main() {
         float aspect = 1280.0f / 720.0f;
         float fov = 1.0f / std::tan(45.0f * M_PI / 360.0f);
         
-        // Dynamic Near/Far planes completely fixes Z-fighting on the surface
-        float n = orbit_mode ? 1.0f : 0.1f;
-        float f = orbit_mode ? 5000.0f : 250.0f; 
+        // Correct projection matrix with massive far plane (f=5000) for zooming out
+        float n = 0.1f;
+        float f = 5000.0f; 
         float proj[16] = {
             fov/aspect, 0, 0, 0,
             0, fov, 0, 0,
@@ -574,9 +509,9 @@ int main() {
             
             Vec3 center = eye + view_forward;
             Vec3 f_vec = (center - eye).normalized();
-            Vec3 s_vec = f_vec.cross(view_up).normalized();
-            Vec3 u_vec = s_vec.cross(f_vec);
-            float m[16] = { s_vec.x, u_vec.x, -f_vec.x, 0.0f, s_vec.y, u_vec.y, -f_vec.y, 0.0f, s_vec.z, u_vec.z, -f_vec.z, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f };
+            s = f_vec.cross(view_up).normalized();
+            u = s.cross(f_vec);
+            float m[16] = { s.x, u.x, -f_vec.x, 0.0f, s.y, u.y, -f_vec.y, 0.0f, s.z, u.z, -f_vec.z, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f };
             glMultMatrixf(m);
             glTranslatef(-eye.x, -eye.y, -eye.z);
         }
