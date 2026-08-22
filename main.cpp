@@ -55,7 +55,7 @@ Vec3 normal(const Vec3& v0, const Vec3& v1, const Vec3& v2) {
 }
 
 // ============================================================================
-// 2. Ken Perlin's Improved Noise (Compact OpenSimplex Alternative)
+// 2. Ken Perlin's Improved Noise
 // ============================================================================
 static const int perm[512] = {
     151,160,137,91,90,15,131,13,201,95,96,53,194,233,7,225,140,36,103,30,69,142,8,99,37,240,21,10,23,190,6,148,
@@ -101,20 +101,11 @@ float perlin_noise(float x, float y, float z) {
 float get_noise(const Vec3& dir) {
     float scale = 2.5f; 
     Vec3 p = dir * scale;
-    
-    float val = 0.0f;
-    float amp = 0.55f;
-    float freq = 1.0f;
-    float max_amp = 0.0f;
-    
-    // 5 Octaves of Improved Perlin Noise
+    float val = 0.0f, amp = 0.55f, freq = 1.0f, max_amp = 0.0f;
     for(int i=0; i<5; ++i) {
         val += amp * perlin_noise(p.x * freq, p.y * freq, p.z * freq);
-        freq *= 2.1f; 
-        amp *= 0.48f; 
-        max_amp += amp;
+        freq *= 2.1f; amp *= 0.48f; max_amp += amp;
     }
-    
     float normalized = (val / max_amp + 1.0f) * 0.5f;
     return std::max(0.0f, std::min(1.0f, normalized));
 }
@@ -166,7 +157,7 @@ struct HolodeckChunk {
         float cos_phi_end = std::cos(phi_end);
 
         std::vector<Vertex> verts;
-        int res = 40; // Increased for smoother silhouettes
+        int res = 40; 
         verts.reserve((res + 1) * (res + 1));
         
         for (int i = 0; i <= res; ++i) {
@@ -197,13 +188,11 @@ struct HolodeckChunk {
                 int b = a + res + 1;
                 int c = a + 1;
                 int d = b + 1;
-                
                 tris.push_back({a, b, c});
                 tris.push_back({c, b, d});
             }
         }
 
-        // Vertex Normal Averaging (Crucial for Smooth Shading)
         for (const auto& t : tris) {
             Vec3 n = normal(verts[t.i0].pos, verts[t.i1].pos, verts[t.i2].pos);
             verts[t.i0].normal = verts[t.i0].normal + n;
@@ -211,33 +200,26 @@ struct HolodeckChunk {
             verts[t.i2].normal = verts[t.i2].normal + n;
         }
 
-        for (auto& v : verts) {
-            v.normal = v.normal.normalized();
-        }
+        for (auto& v : verts) v.normal = v.normal.normalized();
 
         dl = glGenLists(1);
         glNewList(dl, GL_COMPILE);
-        glShadeModel(GL_SMOOTH); // Interpolated normals completely hide "pokey" facets!
+        glShadeModel(GL_SMOOTH);
         
         glBegin(GL_TRIANGLES);
         for (const auto& t : tris) {
             auto draw_v = [&](int idx) {
                 const auto& v = verts[idx];
                 glNormal3f(v.normal.x, v.normal.y, v.normal.z);
-                
                 float h = std::max(0.0f, std::min(1.0f, (v.pos.length() - radius) / (radius * 0.05f)));
-                
                 if (h < 0.35f) glColor3f(0.1f, 0.3f, 0.7f); 
                 else if (h < 0.4f) glColor3f(0.2f, 0.4f, 0.8f); 
                 else if (h < 0.45f) glColor3f(0.76f, 0.70f, 0.50f); 
                 else if (h < 0.75f) glColor3f(0.13f, 0.54f, 0.13f); 
                 else glColor3f(0.9f, 0.9f, 0.95f); 
-                
                 glVertex3f(v.pos.x, v.pos.y, v.pos.z);
             };
-            draw_v(t.i0);
-            draw_v(t.i1);
-            draw_v(t.i2);
+            draw_v(t.i0); draw_v(t.i1); draw_v(t.i2);
         }
         glEnd();
         glEndList();
@@ -285,7 +267,9 @@ struct HolodeckChunk {
             LogicalEntity human;
             human.type = LogicalEntity::HUMANOID; human.name = "Wandering Entity";
             Vec3 up = tardis_pos.normalized();
-            Vec3 right = Vec3(0,1,0).cross(up).normalized();
+            Vec3 r_up(0, 1, 0);
+            if (std::abs(up.y) > 0.99f) r_up = Vec3(0, 0, 1);
+            Vec3 right = up.cross(r_up).normalized(); // Fixed right-handed cross product
             human.local_pos = (tardis_pos + right * 2.0f).normalized() * tardis_pos.length();
             human.velocity = {0.8f, 0, 0.8f}; human.wander_timer = 2.0f;
             human.local_bounds.min = {-0.2f, 0, -0.2f}; human.local_bounds.max = {0.2f, 1.0f, 0.2f};
@@ -399,7 +383,9 @@ void restore_tardis(PlanetaryHolodeck& holo) {
         if (e.type == LogicalEntity::HUMANOID) {
             Vec3 tardis_pos = chunk->entities[0].local_pos;
             Vec3 up = tardis_pos.normalized();
-            Vec3 right = Vec3(0,1,0).cross(up).normalized();
+            Vec3 r_up(0, 1, 0);
+            if (std::abs(up.y) > 0.99f) r_up = Vec3(0, 0, 1);
+            Vec3 right = up.cross(r_up).normalized(); // Fixed right-handed cross product
             e.local_pos = (tardis_pos + right * 2.0f).normalized() * tardis_pos.length(); 
         }
     }
@@ -448,7 +434,7 @@ int main() {
     glEnable(GL_LIGHT0);
     glEnable(GL_COLOR_MATERIAL);
     glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
-    glShadeModel(GL_SMOOTH); // Smooth global shading
+    glShadeModel(GL_SMOOTH); 
 
     float ambient[] = {0.4f, 0.4f, 0.4f, 1.0f};
     float diffuse[] = {0.8f, 0.8f, 0.8f, 1.0f};
@@ -647,13 +633,16 @@ int main() {
                         Vec3 up = e.local_pos.normalized();
                         Vec3 r_up(0, 1, 0);
                         if (std::abs(up.y) > 0.99f) r_up = Vec3(0, 0, 1);
-                        Vec3 right = r_up.cross(up).normalized();
-                        Vec3 forward = up.cross(right);
+                        
+                        // FIX 1: Cross Product Order for Right-Handed Rule
+                        Vec3 right = up.cross(r_up).normalized();
+                        Vec3 forward = right.cross(up).normalized();
 
+                        // FIX 2: Strict OpenGL Column-Major Memory Layout
                         float rotMat[16] = {
-                            right.x, up.x, forward.x, 0.0f,
-                            right.y, up.y, forward.y, 0.0f,
-                            right.z, up.z, forward.z, 0.0f,
+                            right.x, right.y, right.z, 0.0f,
+                            up.x, up.y, up.z, 0.0f,
+                            forward.x, forward.y, forward.z, 0.0f,
                             0.0f, 0.0f, 0.0f, 1.0f
                         };
                         glMultMatrixf(rotMat);
