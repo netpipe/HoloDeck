@@ -413,6 +413,7 @@ void drawHouse() {
     drawSolidBox({{-0.5f, 0.0f, 1.5f}, {0.5f, 2.0f, 1.55f}}, {0.3f, 0.2f, 0.1f}); 
 }
 
+bool was_at_pole;
 // ============================================================================
 // 8. Main Application
 // ============================================================================
@@ -466,57 +467,62 @@ int main() {
     auto lastTime = std::chrono::high_resolution_clock::now();
 
     while (!glfwWindowShouldClose(window)) {
-        auto now = std::chrono::high_resolution_clock::now();
-        float dt = std::chrono::duration<float>(now - lastTime).count();
-        lastTime = now;
+auto now = std::chrono::high_resolution_clock::now();
+float dt = std::chrono::duration<float>(now - lastTime).count();
+lastTime = now;
 
-        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) glfwSetWindowShouldClose(window, true);
+// CRITICAL FIX 1: Clamp dt to prevent "death spiral" lag spikes 
+// from causing massive movement jumps and chunk reloads
+if (dt > 0.05f) dt = 0.05f; 
 
-        float moveSpeed = 15.0f * dt;
-        if (glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS) {
-            orbit_mode = !orbit_mode;
-            if (orbit_mode) glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-            else glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-            while(glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS) glfwPollEvents();
-        }
-        
-        if (glfwGetKey(window, GLFW_KEY_PAGE_UP) == GLFW_PRESS) orbit_dist -= 150.0f * dt;
-        if (glfwGetKey(window, GLFW_KEY_PAGE_DOWN) == GLFW_PRESS) orbit_dist += 150.0f * dt;
-        if (orbit_dist < planet_radius * 1.2f) orbit_dist = planet_radius * 1.2f;
-        if (orbit_dist > 5000.0f) orbit_dist = 5000.0f; 
+if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) glfwSetWindowShouldClose(window, true);
 
-        Vec3 N = camPos.normalized();
-        Vec3 ref_up(0, 1, 0);
-        if (std::abs(N.y) > 0.99f) ref_up = Vec3(0, 0, 1);
-        Vec3 T = ref_up.cross(N).normalized(); 
-        Vec3 B = N.cross(T); 
+if (glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS) {
+    orbit_mode = !orbit_mode;
+    if (orbit_mode) glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    else glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    while(glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS) glfwPollEvents();
+}
 
-        Vec3 local_forward = B * std::cos(camYaw) + T * std::sin(camYaw);
-        Vec3 local_right = T * std::cos(camYaw) - B * std::sin(camYaw);
+if (glfwGetKey(window, GLFW_KEY_PAGE_UP) == GLFW_PRESS) orbit_dist -= 150.0f * dt;
+if (glfwGetKey(window, GLFW_KEY_PAGE_DOWN) == GLFW_PRESS) orbit_dist += 150.0f * dt;
+if (orbit_dist < planet_radius * 1.2f) orbit_dist = planet_radius * 1.2f;
+if (orbit_dist > 5000.0f) orbit_dist = 5000.0f;
 
-        if (!orbit_mode) {
-            if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) camPos = camPos + local_forward * moveSpeed;
-            if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) camPos = camPos - local_forward * moveSpeed;
-            if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) camPos = camPos - local_right * moveSpeed;
-            if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) camPos = camPos + local_right * moveSpeed;
-            
-            N = camPos.normalized();
-            float noise_val = get_noise(N);
-            float terrain_radius = planet_radius + noise_val * (planet_radius * 0.05f);
-            camPos = N * (terrain_radius + 1.5f); 
-        } else {
-            if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) camPitch += 1.5f * dt;
-            if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) camPitch -= 1.5f * dt;
-            if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) camYaw -= 1.5f * dt;
-            if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) camYaw += 1.5f * dt;
-            
-            if (camPitch > 1.5f) camPitch = 1.5f;
-            if (camPitch < -1.5f) camPitch = -1.5f;
-            
-            camPos = Vec3(orbit_dist * std::cos(camPitch) * std::sin(camYaw), 
-                          orbit_dist * std::sin(camPitch), 
-                          orbit_dist * std::cos(camPitch) * std::cos(camYaw));
-        }
+// CRITICAL FIX 2: Calculate vectors safely
+Vec3 N = camPos.normalized();
+Vec3 ref_up(0, 1, 0);
+if (std::abs(N.y) > 0.98f) ref_up = Vec3(0, 0, 1); // Pole safety threshold
+
+Vec3 T = ref_up.cross(N).normalized();
+Vec3 B = N.cross(T);
+Vec3 local_forward = B * std::cos(camYaw) + T * std::sin(camYaw);
+Vec3 local_right = T * std::cos(camYaw) - B * std::sin(camYaw);
+
+float moveSpeed = 15.0f * dt;
+if (!orbit_mode) {
+    // CRITICAL FIX 3: Use != GLFW_RELEASE to catch both initial press AND held key repeats
+    if (glfwGetKey(window, GLFW_KEY_W) != GLFW_RELEASE) camPos = camPos + local_forward * moveSpeed;
+    if (glfwGetKey(window, GLFW_KEY_S) != GLFW_RELEASE) camPos = camPos - local_forward * moveSpeed;
+    if (glfwGetKey(window, GLFW_KEY_A) != GLFW_RELEASE) camPos = camPos - local_right * moveSpeed;
+    if (glfwGetKey(window, GLFW_KEY_D) != GLFW_RELEASE) camPos = camPos + local_right * moveSpeed;
+
+    // Snap to terrain
+    N = camPos.normalized();
+    float noise_val = get_noise(N);
+    float terrain_radius = planet_radius + noise_val * (planet_radius * 0.05f);
+    camPos = N * (terrain_radius + 1.5f);
+} else {
+    if (glfwGetKey(window, GLFW_KEY_W) != GLFW_RELEASE) camPitch += 1.5f * dt;
+    if (glfwGetKey(window, GLFW_KEY_S) != GLFW_RELEASE) camPitch -= 1.5f * dt;
+    if (glfwGetKey(window, GLFW_KEY_A) != GLFW_RELEASE) camYaw -= 1.5f * dt;
+    if (glfwGetKey(window, GLFW_KEY_D) != GLFW_RELEASE) camYaw += 1.5f * dt;
+    if (camPitch > 1.5f) camPitch = 1.5f;
+    if (camPitch < -1.5f) camPitch = -1.5f;
+    camPos = Vec3(orbit_dist * std::cos(camPitch) * std::sin(camYaw),
+                  orbit_dist * std::sin(camPitch),
+                  orbit_dist * std::cos(camPitch) * std::cos(camYaw));
+}
 
         double xpos, ypos;
         glfwGetCursorPos(window, &xpos, &ypos);
@@ -530,33 +536,57 @@ int main() {
         if (camPitch > 1.5f) camPitch = 1.5f;
         if (camPitch < -1.5f) camPitch = -1.5f;
 
-        float current_theta = std::atan2(camPos.z, camPos.x);
-        if (current_theta < 0) current_theta += 2.0f * M_PI;
+// CRITICAL FIX 4: Robust, Pole-Safe Chunk Streaming
+N = camPos.normalized();
+bool is_at_pole = (std::abs(N.y) > 0.98f);
+
+if (!is_at_pole) {
+    float current_theta = std::atan2(camPos.z, camPos.x);
+    if (current_theta < 0) current_theta += 2.0f * M_PI;
+    
+    if (was_at_pole) {
+        // Just left the pole: snap unwrapped_theta to current longitude 
+        // to prevent massive delta_theta jumps from the singularity
+        float two_pi = 2.0f * M_PI;
+        float cycles = std::round(unwrapped_theta / two_pi);
+        unwrapped_theta = current_theta + cycles * two_pi;
+    } else {
+        // Normal continuous tracking
         float delta_theta = current_theta - last_theta;
         if (delta_theta > M_PI) delta_theta -= 2.0f * M_PI;
         if (delta_theta < -M_PI) delta_theta += 2.0f * M_PI;
         unwrapped_theta += delta_theta;
-        last_theta = current_theta;
+    }
+    last_theta = current_theta;
+}
+was_at_pole = is_at_pole; // Remember state for next frame
 
-        float current_phi = std::acos(std::max(-1.0f, std::min(1.0f, camPos.y / camPos.length())));
+float current_phi = std::acos(std::max(-1.0f, std::min(1.0f, N.y)));
 
-        float chunk_x_float = (unwrapped_theta / (2.0f * M_PI)) * 16.0f;
-        float chunk_y_float = (current_phi / M_PI) * 8.0f;
+float chunk_x_float = (unwrapped_theta / (2.0f * M_PI)) * 16.0f;
+float chunk_y_float = (current_phi / M_PI) * 8.0f;
 
-        int current_cx = std::floor(chunk_x_float);
-        int current_cy = std::floor(chunk_y_float);
+int current_cx = std::floor(chunk_x_float);
+int current_cy = std::floor(chunk_y_float);
 
-        int desired_origin_x = current_cx - holodeck.width / 2;
-        int desired_origin_y = current_cy - holodeck.height / 2;
-        
-        int min_origin_y = 0;
-        int max_origin_y = 8 - holodeck.height;
-        desired_origin_y = std::max(min_origin_y, std::min(max_origin_y, desired_origin_y));
+int desired_origin_x = current_cx - holodeck.width / 2;
+int desired_origin_y = current_cy - holodeck.height / 2;
 
-        while (holodeck.origin_x < desired_origin_x) { holodeck.shift_x(1); }
-        while (holodeck.origin_x > desired_origin_x) { holodeck.shift_x(-1); }
-        while (holodeck.origin_y < desired_origin_y) { holodeck.shift_y(1); }
-        while (holodeck.origin_y > desired_origin_y) { holodeck.shift_y(-1); }
+int min_origin_y = 0;
+int max_origin_y = 8 - holodeck.height;
+desired_origin_y = std::max(min_origin_y, std::min(max_origin_y, desired_origin_y));
+
+// CRITICAL FIX 5: SAFETY LIMIT on chunk shifting per frame
+// Prevents the "death spiral" if desired_origin jumps for any reason
+int max_shifts = 2; 
+int shifts_x = 0, shifts_y = 0;
+
+while (holodeck.origin_x < desired_origin_x && shifts_x < max_shifts) { holodeck.shift_x(1); shifts_x++; }
+while (holodeck.origin_x > desired_origin_x && shifts_x < max_shifts) { holodeck.shift_x(-1); shifts_x++; }
+while (holodeck.origin_y < desired_origin_y && shifts_y < max_shifts) { holodeck.shift_y(1); shifts_y++; }
+while (holodeck.origin_y > desired_origin_y && shifts_y < max_shifts) { holodeck.shift_y(-1); shifts_y++; }
+	
+	
 
         static bool t_pressed = false, b_pressed = false, r_pressed = false;
         if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS && !t_pressed) { t_pressed = true; advance_time(holodeck); }
