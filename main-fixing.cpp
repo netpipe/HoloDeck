@@ -578,7 +578,7 @@ desired_origin_y = std::max(min_origin_y, std::min(max_origin_y, desired_origin_
 
 // CRITICAL FIX 5: SAFETY LIMIT on chunk shifting per frame
 // Prevents the "death spiral" if desired_origin jumps for any reason
-int max_shifts = 2; 
+int max_shifts = 4; 
 int shifts_x = 0, shifts_y = 0;
 
 while (holodeck.origin_x < desired_origin_x && shifts_x < max_shifts) { holodeck.shift_x(1); shifts_x++; }
